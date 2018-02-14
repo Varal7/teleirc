@@ -107,7 +107,7 @@ exports.getName = function(user, config) {
 };
 
 exports.getIRCName = function(msg, config) {
-    var ircNickMatchRE = /^<(.*)>/;
+    var ircNickMatchRE = /^<(.*)> (.*)/;
     var results = ircNickMatchRE.exec(msg.text);
     var name;
     if (!results) {
@@ -115,6 +115,7 @@ exports.getIRCName = function(msg, config) {
         name = exports.getName(msg.from || msg.forward_from, config);
     } else {
         name = results[1];
+        msg.text = results[2];
     }
 
     return name;
@@ -292,6 +293,11 @@ var reconstructMarkdown = function(msg) {
     });
 };
 
+var isMedia = function(msg) {
+    return Boolean(msg.audio || msg.document || msg.photo || msg.sticker ||
+        msg.video || msg.voice || msg.contact || msg.location);
+};
+
 exports.parseMsg = function(msg, myUser, tg, callback) {
     // TODO: Telegram code should not have to deal with IRC channels at all
 
@@ -318,7 +324,11 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
         exports.writeChatId(channel);
     }
 
-    var age = Math.floor(Date.now() / 1000) - msg.date;
+    var date = msg.date;
+    if (msg.edit_date) {
+        date = msg.edit_date;
+    }
+    var age = Math.floor(Date.now() / 1000) - date;
     if (config.maxMsgAge && age > config.maxMsgAge) {
         logger.warn('skipping ' + age + ' seconds old message! ' +
             'NOTE: change this behaviour with config.maxMsgAge, also check your system clock');
@@ -326,8 +336,7 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
     }
 
     // skip posts containing media if it's configured off
-    if ((msg.audio || msg.document || msg.photo || msg.sticker || msg.video ||
-                msg.voice || msg.contact || msg.location) && !config.showMedia) {
+    if (isMedia(msg) && !config.showMedia) {
         // except if the media object is an photo and imgur uploading is
         // enabled
         if (!(msg.photo && config.uploadToImgur)) {
@@ -386,28 +395,41 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
         reconstructMarkdown(msg);
     }
 
+    if (msg.edit_date && msg.text) {
+        msg.text = '[Edit] ' + msg.text;
+    }
+
     if (msg.reply_to_message && msg.text) {
         var replyName;
+        var replyMsg = msg.reply_to_message;
 
         // is the replied to message originating from the bot?
-        if (msg.reply_to_message.from.username == myUser.username) {
-            replyName = exports.getIRCName(msg.reply_to_message, config);
+        if (replyMsg.from.username == myUser.username) {
+            replyName = exports.getIRCName(replyMsg, config);
         } else {
-            replyName = exports.getName(msg.reply_to_message.from, config);
+            replyName = exports.getName(replyMsg.from, config);
         }
 
         // Show snippet of message being replied to
         var snippet = '';
         if (config.replySnippetLength) {
-            if (!msg.reply_to_message.text) {
-                truncatedMessage = '<reply to image>';
-            } else {
-                truncatedMessage = msg.reply_to_message.text
+            if (isMedia(replyMsg)) {
+                truncatedMessage = '<reply to media>';
+            } else if (replyMsg.new_chat_participant) {
+                truncatedMessage = exports.getName(replyMsg.new_chat_participant,
+                    config) + ' was added by: ' + exports.getName(msg.from, config);
+            } else if (replyMsg.left_chat_participant) {
+                truncatedMessage = exports.getName(replyMsg.left_chat_participant,
+                    config) + ' was removed by: ' + exports.getName(msg.from, config);
+            } else if (replyMsg.text) {
+                truncatedMessage = replyMsg.text
                                    .substr(0, config.replySnippetLength)
                                    .trim();
-                if (truncatedMessage.length < msg.reply_to_message.text.length) {
+                if (truncatedMessage.length < replyMsg.text.length) {
                     truncatedMessage = truncatedMessage + ' …';
                 }
+            } else {
+                truncatedMessage = '<reply to unk>';
             }
             snippet = ' [' + truncatedMessage + ']';
         }
