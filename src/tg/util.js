@@ -375,6 +375,17 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
             text: command,
             origText: prefix + msg.text
         });
+    } else if (msg.text && !msg.text.indexOf('/msg')) {
+        var text = msg.text.split(' ');
+        text.shift();
+        var to = {};
+        to.ircChan = text.shift();
+        text = text.join(' ');
+
+        return callback({
+            channel: to,
+            text: text
+        });
     } else if (msg.text && !msg.text.indexOf('/me')) {
         var text = msg.text.split(' ');
         text.shift();
