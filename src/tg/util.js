@@ -12,6 +12,7 @@ var os = require('os');
 var child_process = require('child_process');
 var mime = require('mime');
 var https = require('https');
+var jsdiff = require('diff');
 
 if (config.uploadToImgur) {
     imgur.setClientId(config.imgurClientId);
@@ -25,6 +26,47 @@ try {
     ChatIds = JSON.parse(fs.readFileSync(chatIdsFile));
 } catch (e) {
     ChatIds = null;
+}
+
+const historyLength = 5;
+var shortHistory = {};
+
+
+function addToHistory(chatId, messageId, text) {
+    if (!shortHistory.chatId) {
+        shortHistory.chatId = {};
+    }
+    shortHistory.chatId[messageId % historyLength] = {messageId: messageId, text: text};
+}
+
+function getFromHistory(chatId, messageId) {
+    if (!shortHistory.chatId) {
+        return null;
+    }
+    var candidate = shortHistory.chatId[messageId % historyLength];
+    if (candidate.messageId == messageId) {
+        return candidate.text
+    }
+    return null;
+}
+
+function getDiffString(oldText, newText) {
+    logger.debug(oldText);
+    logger.debug(newText);
+
+    var diff = jsdiff.diffChars(oldText, newText);
+    logger.debug(diff);
+    var str = "";
+    diff.forEach(function(part) {
+        if (part.added) {
+            str += "+" + part.value + " ";
+        }
+        if (part.removed) {
+            str += "-" + part.value + " ";
+        }
+    });
+    logger.debug(str);
+    return str.trim();
 }
 
 function migrateChatIdStorage() {
@@ -395,8 +437,19 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
         reconstructMarkdown(msg);
     }
 
-    if (msg.edit_date && msg.text) {
-        msg.text = '[Edit] ' + msg.text;
+
+    if (msg.text) {
+        if (msg.edit_date) {
+            var oldText = getFromHistory(msg.chat.id, msg['message_id']);
+            if (!oldText) {
+                return;
+            }
+            var newText = msg.text;
+            msg.text = getDiffString(oldText, newText);
+            addToHistory(msg.chat.id, msg['message_id'], newText)
+        } else {
+            addToHistory(msg.chat.id, msg['message_id'], msg.text)
+        }
     }
 
     if (msg.reply_to_message && msg.text) {
